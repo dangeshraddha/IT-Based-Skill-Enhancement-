@@ -898,31 +898,40 @@
 <div class="modal-backdrop" id="galleryModal">
     <div class="modal">
         <h3 id="galleryModalTitle">Add Gallery Image</h3>
-        <input type="hidden" id="gmId">
 
         <div class="form-row">
             <label>Caption *</label>
-            <input type="text" id="gmCaption" placeholder="e.g. Showroom Front">
+            <input type="text" id="gmCaption" placeholder="Enter image caption">
         </div>
 
         <div class="form-row">
-            <label>Upload image *</label>
-            <input type="file" id="gmFile" accept="image/*">
-            <div class="form-note">JPG, JPEG, PNG or WEBP. Maximum 10 MB.</div>
+            <label>Description</label>
+            <textarea id="gmDescription" rows="3" placeholder="Enter image description"></textarea>
         </div>
 
-        <div id="gmCurrentPreview" style="display:none;margin:10px 0 16px">
-            <img id="gmPreviewImg" src="" alt="Current gallery image"
-                 style="width:100%;max-height:220px;object-fit:cover;border-radius:12px;border:1px solid #23496a">
+        <div class="form-row">
+            <label>Select Image *</label>
+            <input type="file" id="gmFile" accept="image/jpeg,image/png,image/webp">
+            <small style="display:block;margin-top:6px;color:#6b7280;">
+                JPG, PNG or WEBP. Maximum size: 10 MB.
+            </small>
+        </div>
+
+        <div id="gmPreviewContainer" style="display:none;margin-top:12px;">
+            <img
+                    id="gmPreview"
+                    src=""
+                    alt="Image Preview"
+                    style="width:100%;max-height:220px;object-fit:cover;border-radius:10px;"
+            >
         </div>
 
         <div class="modal-actions">
             <button class="btn btn-ghost btn-sm" onclick="closeModal('galleryModal')">Cancel</button>
-            <button class="btn btn-primary btn-sm" onclick="saveGallery()">Upload Image</button>
+            <button class="btn btn-primary btn-sm" onclick="saveGallery()">Save Image</button>
         </div>
     </div>
 </div>
-
 <script>
     /* ============================================================
        IMAGE FALLBACK — shows a clean placeholder instead of a
@@ -973,6 +982,55 @@
 
     // Spring Boot backend base URL
     const API_BASE_URL = 'http://localhost:8081';
+
+    function getGalleryImageUrl(fileUrl){
+        if(!fileUrl) return '';
+        if(/^https?:\\/\\//i.test(fileUrl)) return fileUrl;
+        return `${API_BASE_URL}${fileUrl.startsWith('/') ? fileUrl : '/' + fileUrl}`;
+    }
+
+    /* ---- Gallery image preview ---- */
+    document.addEventListener('DOMContentLoaded', function(){
+        const galleryFileInput = document.getElementById('gmFile');
+        if(!galleryFileInput) return;
+
+        galleryFileInput.addEventListener('change', function(){
+            const file = this.files[0];
+            const previewContainer = document.getElementById('gmPreviewContainer');
+            const preview = document.getElementById('gmPreview');
+
+            if(!file){
+                previewContainer.style.display = 'none';
+                preview.removeAttribute('src');
+                return;
+            }
+
+            const allowedTypes = ['image/jpeg','image/png','image/webp'];
+
+            if(!allowedTypes.includes(file.type)){
+                showToast('Please select a JPG, PNG or WEBP image.');
+                this.value = '';
+                previewContainer.style.display = 'none';
+                preview.removeAttribute('src');
+                return;
+            }
+
+            if(file.size > 10 * 1024 * 1024){
+                showToast('Image size must be less than 10 MB.');
+                this.value = '';
+                previewContainer.style.display = 'none';
+                preview.removeAttribute('src');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(event){
+                preview.src = event.target.result;
+                previewContainer.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+        });
+    });
 
     let PRODUCTS=[], SERVICES=[], GALLERY=[], ENQUIRIES=[], CUSTOMERS=[], ACTIVITIES=[];
     let isAdminAuthed = false;
@@ -1040,15 +1098,21 @@ async function loadServicesFromBackend(){
                 method: 'GET',
                 headers: { 'Accept': 'application/json' }
             });
+
             if(!response.ok){
                 throw new Error(`GET /api/gallery failed: HTTP ${response.status}`);
             }
+
             const data = await response.json();
+
             GALLERY = Array.isArray(data) ? data.map(g => ({
                 id: g.id,
                 caption: g.caption || g.title || '',
-                url: g.url || g.imageUrl || g.imageURL || (g.filename ? `${API_BASE_URL}/uploads/gallery/${g.filename}` : '')
+                description: g.description || '',
+                fileName: g.fileName || g.filename || '',
+                fileUrl: g.fileUrl || g.url || g.imageUrl || g.imageURL || ''
             })) : [];
+
             return GALLERY;
         } catch(error) {
             console.error('Gallery loading error:', error);
@@ -1122,13 +1186,16 @@ async function loadServicesFromBackend(){
             : `<div class="empty-state">No services listed yet.</div>`;
 
         const gg = document.getElementById('userGalleryGrid');
-        gg.innerHTML = GALLERY.length ? GALLERY.map(g=>`
+        gg.innerHTML = GALLERY.length ? GALLERY.map(g => {
+            const imageUrl = getGalleryImageUrl(g.fileUrl);
+            return `
     <figure>
-      ${g.url
-        ? `<img src="${String(g.url).replace(/"/g,'&quot;')}" alt="${escapeHtml(g.caption)}" onerror="imgFallback(this,'ϟ')">`
+      ${imageUrl
+        ? `<img src="${String(imageUrl).replace(/"/g,'&quot;')}" alt="${escapeHtml(g.caption)}" onerror="imgFallback(this,'ϟ')">`
         : `<div class="img-fallback" style="height:600px"><span class="fb-icon">ϟ</span></div>`}
       <figcaption>${escapeHtml(g.caption)}</figcaption>
-    </figure>`).join('') : `<div class="empty-state">No gallery images yet.</div>`;
+    </figure>`;
+        }).join('') : `<div class="empty-state">No gallery images yet.</div>`;
     }
 
     /* ============================================================
@@ -1417,25 +1484,46 @@ async function loadServicesFromBackend(){
     </tr>`).join('') || `<tr><td colspan="4" style="color:#5c6b7a">No matching services.</td></tr>`;
     }
     function renderAdminGallery(){
-        const q = (document.getElementById('gallerySearch')?.value||'').trim().toLowerCase();
-        const list = GALLERY.filter(g=>!q || `${g.caption} ${g.url}`.toLowerCase().includes(q));
-        document.getElementById('galleryCountLabel').textContent = `${list.length} of ${GALLERY.length} image${GALLERY.length===1?'':'s'}`;
-        document.getElementById('adminGalleryGrid').innerHTML = list.map(g=>`
+        const q = (document.getElementById('gallerySearch')?.value || '').trim().toLowerCase();
+
+        const list = GALLERY.filter(g =>
+            !q || `${g.caption || ''} ${g.fileName || ''}`.toLowerCase().includes(q)
+        );
+
+        document.getElementById('galleryCountLabel').textContent =
+            `${list.length} of ${GALLERY.length} image${GALLERY.length === 1 ? '' : 's'}`;
+
+        document.getElementById('adminGalleryGrid').innerHTML =
+            list.map(g => {
+                const imageUrl = getGalleryImageUrl(g.fileUrl);
+
+                return `
     <article class="gallery-admin-card">
       <div class="preview">
-        ${g.url ? `<img src="${String(g.url).replace(/"/g,'&quot;')}" alt="${escapeHtml(g.caption)}" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">` : ''}
-        <div class="preview-fallback" style="display:${g.url?'none':'grid'}">ϟ</div>
+        ${
+            imageUrl
+                ? `<img src="${String(imageUrl).replace(/"/g,'&quot;')}"
+                         alt="${escapeHtml(g.caption)}"
+                         onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">`
+                : ''
+        }
+        <div class="preview-fallback" style="display:${imageUrl ? 'none' : 'grid'}">ϟ</div>
       </div>
+
       <div class="gallery-info">
         <div class="gallery-caption">${escapeHtml(g.caption)}</div>
-        <div class="gallery-url">${escapeHtml(g.url||'No image URL/path')}</div>
+        <div class="gallery-url">${escapeHtml(g.fileName || 'No image')}</div>
+        ${g.description ? `<div style="font-size:11px;color:#7b8792;margin-bottom:10px;">${escapeHtml(g.description)}</div>` : ''}
+
         <div class="row-actions">
-          <button class="btn btn-ghost btn-sm" onclick="openGalleryModal('${g.id}')">Edit</button>
           <button class="btn btn-danger btn-sm" onclick="deleteGallery('${g.id}')">Delete</button>
         </div>
       </div>
-    </article>`).join('') || `<div class="empty-state">No matching gallery images.</div>`;
+    </article>`;
+            }).join('') ||
+            `<div class="empty-state">No matching gallery images.</div>`;
     }
+
     function renderAdminEnquiries(){
         const q = (document.getElementById('enquirySearch')?.value||'').trim().toLowerCase();
         const status = document.getElementById('enquiryStatusFilter')?.value||'';
@@ -1682,33 +1770,26 @@ async function loadServicesFromBackend(){
     }
 
     /* ---- Gallery CRUD: Spring Boot + file upload ---- */
-    function openGalleryModal(id){
-        document.getElementById('gmId').value = id || '';
-        const item = id ? GALLERY.find(g=>String(g.id)===String(id)) : null;
+    function openGalleryModal(){
+        document.getElementById('gmCaption').value = '';
+        document.getElementById('gmDescription').value = '';
 
-        document.getElementById('galleryModalTitle').textContent =
-            item ? 'Replace Gallery Image' : 'Add Gallery Image';
+        const fileInput = document.getElementById('gmFile');
+        fileInput.value = '';
 
-        document.getElementById('gmCaption').value = item ? item.caption : '';
-        document.getElementById('gmFile').value = '';
+        const previewContainer = document.getElementById('gmPreviewContainer');
+        const preview = document.getElementById('gmPreview');
 
-        const previewBox = document.getElementById('gmCurrentPreview');
-        const previewImg = document.getElementById('gmPreviewImg');
+        preview.removeAttribute('src');
+        previewContainer.style.display = 'none';
 
-        if(item && item.url){
-            previewImg.src = item.url;
-            previewBox.style.display = 'block';
-        } else {
-            previewImg.removeAttribute('src');
-            previewBox.style.display = 'none';
-        }
-
+        document.getElementById('galleryModalTitle').textContent = 'Add Gallery Image';
         document.getElementById('galleryModal').classList.add('show');
     }
 
     async function saveGallery(){
-        const id = document.getElementById('gmId').value.trim();
         const caption = document.getElementById('gmCaption').value.trim();
+        const description = document.getElementById('gmDescription').value.trim();
         const fileInput = document.getElementById('gmFile');
         const file = fileInput.files[0];
 
@@ -1717,96 +1798,91 @@ async function loadServicesFromBackend(){
             return;
         }
 
-        if(!id && !file){
+        if(!file){
             showToast('Please select an image.');
             return;
         }
 
-        if(file && file.size > 10 * 1024 * 1024){
-            showToast('Image must be smaller than 10 MB.');
+        const allowedTypes = ['image/jpeg','image/png','image/webp'];
+
+        if(!allowedTypes.includes(file.type)){
+            showToast('Only JPG, PNG and WEBP images are allowed.');
             return;
         }
 
+        if(file.size > 10 * 1024 * 1024){
+            showToast('Image size must be less than 10 MB.');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('caption', caption);
+        formData.append('description', description);
+
         try {
-            let response;
-
-            if(id){
-                // Replace existing image. The backend may expose PUT /{id}
-                // as multipart; if your backend only supports upload + delete,
-                // use the delete/add flow described below.
-                const formData = new FormData();
-                formData.append('caption', caption);
-                if(file) formData.append('file', file);
-
-                response = await fetch(
-                    `${API_BASE_URL}/api/gallery/${encodeURIComponent(id)}`,
-                    {
-                        method: 'PUT',
-                        body: formData
-                    }
-                );
-            } else {
-                const formData = new FormData();
-                formData.append('caption', caption);
-                formData.append('file', file);
-
-                response = await fetch(`${API_BASE_URL}/api/gallery/upload`, {
-                    method: 'POST',
-                    body: formData
-                });
-            }
+            const response = await fetch(`${API_BASE_URL}/api/gallery/upload`, {
+                method: 'POST',
+                body: formData
+            });
 
             if(!response.ok){
                 const message = await response.text();
                 throw new Error(message || `HTTP ${response.status}`);
             }
 
+            const savedImage = await response.json();
+            console.log('Gallery image saved:', savedImage);
+
             await loadGalleryFromBackend();
-            await logActivity(
-                'gallery',
-                id ? 'Gallery image updated' : 'Gallery image added',
-                caption
-            );
+            await logActivity('gallery', 'Gallery image added', caption);
 
             closeModal('galleryModal');
             renderAdminAll();
             renderUserSite();
-            showToast(id ? 'Gallery image updated successfully.' : 'Gallery image uploaded successfully.');
+
+            showToast('Gallery image uploaded successfully.');
         } catch(error) {
             console.error('Save gallery error:', error);
-            showToast('Failed to upload gallery image. Check Spring Boot and /api/gallery.');
+            showToast('Failed to upload gallery image. Make sure Spring Boot is running on port 8081.');
         }
     }
 
     async function deleteGallery(id){
-        const item = GALLERY.find(g=>String(g.id)===String(id));
+        const item = GALLERY.find(g => String(g.id) === String(id));
         if(!item) return;
 
-        showConfirm('Delete gallery image?', `Delete "${item.caption}"? This cannot be undone.`, async ()=>{
-            try {
-                const response = await fetch(
-                    `${API_BASE_URL}/api/gallery/${encodeURIComponent(id)}`,
-                    {
-                        method: 'DELETE',
-                        headers: { 'Accept': 'application/json, text/plain' }
+        showConfirm(
+            'Delete gallery image?',
+            `Delete "${item.caption}"? This cannot be undone.`,
+            async () => {
+                try {
+                    const response = await fetch(
+                        `${API_BASE_URL}/api/gallery/${encodeURIComponent(id)}`,
+                        {
+                            method: 'DELETE',
+                            headers: { 'Accept': 'application/json, text/plain' }
+                        }
+                    );
+
+                    if(!response.ok){
+                        const message = await response.text();
+                        throw new Error(message || `HTTP ${response.status}`);
                     }
-                );
 
-                if(!response.ok){
-                    const message = await response.text();
-                    throw new Error(message || `HTTP ${response.status}`);
+                    await loadGalleryFromBackend();
+                    await logActivity('gallery', 'Gallery image deleted', item.caption);
+
+                    renderAdminAll();
+                    renderUserSite();
+
+                    showToast('Gallery image deleted successfully.');
+                } catch(error) {
+                    console.error('Delete gallery error:', error);
+                    showToast('Failed to delete gallery image. Check Spring Boot and /api/gallery.');
                 }
-
-                await loadGalleryFromBackend();
-                await logActivity('gallery', 'Gallery image deleted', item.caption);
-                renderAdminAll();
-                renderUserSite();
-                showToast('Gallery image removed successfully.');
-            } catch(error) {
-                console.error('Delete gallery error:', error);
-                showToast('Failed to delete gallery image. Check Spring Boot and /api/gallery.');
             }
-        });
+        );
     }
 
     /* ---- Enquiries ---- */

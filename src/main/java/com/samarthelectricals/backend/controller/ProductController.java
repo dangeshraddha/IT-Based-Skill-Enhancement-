@@ -17,21 +17,25 @@ public class ProductController {
         this.productService = productService;
     }
 
+    // Get all products
     @GetMapping
     public List<Product> getAllProducts() {
         return productService.getAllProducts();
     }
 
+    // Get product by ID
     @GetMapping("/{id}")
     public Product getProductById(@PathVariable Long id) {
         return productService.getProductById(id);
     }
 
+    // Add product
     @PostMapping
     public Product addProduct(@RequestBody Product product) {
         return productService.addProduct(product);
     }
 
+    // Update product
     @PutMapping("/{id}")
     public Product updateProduct(
             @PathVariable Long id,
@@ -40,11 +44,9 @@ public class ProductController {
         return productService.updateProduct(id, product);
     }
 
+    // Delete product
     @DeleteMapping("/{id}")
-    public String deleteProduct(@PathVariable Long id) {
-
+    public void deleteProduct(@PathVariable Long id) {
         productService.deleteProduct(id);
-
-        return "Product deleted successfully";
     }
 }
